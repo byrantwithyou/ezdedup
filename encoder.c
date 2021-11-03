@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #include "util.h"
 #include "dedupdef.h"
@@ -63,6 +64,10 @@
 
 //The configuration block defined in main
 config_t * conf;
+
+clock_t start_read, end_read, start_write, end_write, start_comp = LONG_MAX, end_comp;
+double read_time = 0., write_time = 0., comp_time = 0.;
+pthread_mutex_t  start_mutex = PTHREAD_MUTEX_INITIALIZER, end_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //Hash table data structure & utility functions
 struct hashtable *cache;
@@ -259,6 +264,7 @@ static int create_output_file(char *outfile) {
 //NOTE: The parallel version checks the state of each chunk to make sure the
 //      relevant data is available. If it is not then the function waits.
 static void write_chunk_to_file(int fd, chunk_t *chunk) {
+  start_write = clock();
   assert(chunk!=NULL);
 
   //Find original chunk
@@ -280,6 +286,8 @@ static void write_chunk_to_file(int fd, chunk_t *chunk) {
     write_file(fd, TYPE_FINGERPRINT, SHA1_LEN, (unsigned char *)(chunk->sha1));
   }
   pthread_mutex_unlock(&chunk->header.lock);
+  end_write = clock();
+  write_time += (double)(end_write - start_write) / (double) CLOCKS_PER_SEC;
 }
 #else
 //NOTE: The serial version relies on the fact that chunks are processed in-order,
@@ -452,6 +460,13 @@ void *Compress(void * targs) {
   //shutdown
   queue_terminate(&reorder_que[qid]);
 
+static __thread clock_t end_local;
+end_local = clock();
+pthread_mutex_lock(&end_mutex);
+if (end_local > end_comp) {
+  end_comp = end_local;
+}
+pthread_mutex_unlock(&end_mutex);
 #ifdef ENABLE_STATISTICS
   return thread_stats;
 #else
@@ -619,6 +634,13 @@ void * Deduplicate(void * targs) {
  */
 #ifdef ENABLE_PTHREADS
 void *FragmentRefine(void * targs) {
+  static __thread clock_t start_local;
+  start_local = clock();
+  pthread_mutex_lock(&start_mutex);
+  if (start_local < start_comp) {
+    start_comp = start_local;
+  }
+  pthread_mutex_unlock(&start_mutex);
   struct thread_args *args = (struct thread_args *)targs;
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   ringbuffer_t recv_buf, send_buf;
@@ -1056,7 +1078,11 @@ void *Fragment(void * targs){
       preloading_buffer_seek += max_read;
     } else {
       while(bytes_read < MAXBUF) {
+        start_read = clock();
         r = read(fd, chunk->uncompressed_data.ptr+bytes_left+bytes_read, MAXBUF-bytes_read);
+        end_read = clock();
+        read_time += (double)(end_read - start_read) / (double) CLOCKS_PER_SEC;
+
         if(r<0) switch(errno) {
           case EAGAIN:
             EXIT_TRACE("I/O error: No data available\n");break;

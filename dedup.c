@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #include "util.h"
 #include "debug.h"
@@ -23,6 +24,8 @@
 
 
 config_t * conf;
+extern double read_time, write_time, comp_time;
+extern clock_t start_comp, end_comp;
 
 
 
@@ -43,6 +46,8 @@ usage(char* prog)
 }
 /*--------------------------------------------------------------------------*/
 int main(int argc, char** argv) {
+clock_t start_run;
+start_run = clock();
 #ifdef PARSEC_VERSION
 #define __PARSEC_STRING(x) #x
 #define __PARSEC_XSTRING(x) __PARSEC_STRING(x)
@@ -168,7 +173,10 @@ int main(int argc, char** argv) {
 #ifdef ENABLE_PARSEC_HOOKS
   __parsec_bench_end();
 #endif
-
+  double run_time = (double)(clock() - start_run) / (double) CLOCKS_PER_SEC;
+  comp_time = (double)(end_comp - start_comp) / (double) CLOCKS_PER_SEC;
+  fprintf(stdout, "read comp write total \n");
+  fprintf(stdout, "%f %f %f %f\n", read_time, comp_time, write_time, run_time);
   return 0;
 }
 
